@@ -9,6 +9,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend, AreaChart, Area, LineChart, Line } from 'recharts';
 import { 
   Shield, 
@@ -25,22 +26,24 @@ import {
   Eye,
   RefreshCw
 } from 'lucide-react';
-import { useQualityMetrics } from '@/hooks/useQualityMetrics';
+import { useQualityMetrics, useSupplierRanking, useInconsistencyDistribution } from '@/hooks/useQualityMetrics';
 
-// Cores do tema Vivo
+// Cores do tema Vivo - Padrão #A27DF8
 const VIVO_COLORS = [
-  'hsl(280, 100%, 30%)', // Vivo Purple
-  'hsl(280, 100%, 50%)', // Vivo Purple Light
-  'hsl(280, 100%, 20%)', // Vivo Purple Dark
-  'hsl(45, 100%, 50%)',  // Orange
-  'hsl(0, 84%, 60%)',    // Red
-  'hsl(120, 100%, 25%)', // Green
-  'hsl(210, 100%, 50%)', // Blue
-  'hsl(280, 100%, 85%)', // Vivo Purple Very Light
+  '#A27DF8', // Cor padrão principal
+  '#B48FFA', // Variação mais clara
+  '#9267F6', // Variação mais escura
+  '#C4A3FC', // Variação bem clara
+  '#8255F4', // Variação bem escura
+  '#D1B5FE', // Variação muito clara
+  '#7044F2', // Variação muito escura
+  '#E0C9FF', // Variação ultra clara
 ];
 
 const QualityDashboardPageInline: React.FC = () => {
   const { data: metrics, isLoading, error } = useQualityMetrics();
+  const { data: supplierRanking, isLoading: suppliersLoading } = useSupplierRanking();
+  const { data: inconsistencyDistribution, isLoading: distributionLoading } = useInconsistencyDistribution();
 
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat('pt-BR', {
@@ -106,35 +109,19 @@ const QualityDashboardPageInline: React.FC = () => {
 
   const currentMetrics = metrics || mockMetrics;
 
-  // Dados para gráficos
-  const inconsistencyData = [
-    { name: 'Prazo', count: 15, percentage: 25 },
-    { name: 'Multa', count: 8, percentage: 13 },
-    { name: 'Valor', count: 12, percentage: 20 },
-    { name: 'Fornecedor', count: 10, percentage: 17 },
-    { name: 'Cláusula Ausente', count: 15, percentage: 25 },
-  ];
+  // Dados reais de inconsistências por tipo
+  const inconsistencyData = inconsistencyDistribution?.byType || [];
 
-  const areaData = [
-    { name: 'Engenharia', count: 18, percentage: 30 },
-    { name: 'TI', count: 15, percentage: 25 },
-    { name: 'Operações', count: 12, percentage: 20 },
-    { name: 'Comercial', count: 9, percentage: 15 },
-    { name: 'Outros', count: 6, percentage: 10 },
-  ];
+  // Dados reais de inconsistências por área
+  const areaData = inconsistencyDistribution?.byArea || [];
 
-  const supplierData = [
-    { name: 'Fornecedor A', inconsistencies: 8, riskScore: 85 },
-    { name: 'Fornecedor B', inconsistencies: 6, riskScore: 72 },
-    { name: 'Fornecedor C', inconsistencies: 5, riskScore: 68 },
-    { name: 'Fornecedor D', inconsistencies: 4, riskScore: 55 },
-  ];
+  // Dados dos fornecedores virão do hook useSupplierRanking
 
   const deadlineData = [
-    { period: '0-30 dias', count: currentMetrics.contractsExpiring30Days, color: VIVO_COLORS[4] },
-    { period: '31-60 dias', count: currentMetrics.contractsExpiring60Days, color: VIVO_COLORS[3] },
-    { period: '61-90 dias', count: currentMetrics.contractsExpiring90Days, color: VIVO_COLORS[5] },
-    { period: '90+ dias', count: 140, color: VIVO_COLORS[0] },
+    { period: '0-30 dias', count: currentMetrics.contractsExpiring30Days, color: '#A27DF8' },
+    { period: '31-60 dias', count: currentMetrics.contractsExpiring60Days, color: '#B48FFA' },
+    { period: '61-90 dias', count: currentMetrics.contractsExpiring90Days, color: '#9267F6' },
+    { period: '90+ dias', count: 140, color: '#C4A3FC' },
   ];
 
   const timelineData = [
@@ -354,50 +341,45 @@ const QualityDashboardPageInline: React.FC = () => {
                   <AlertTriangle className="h-5 w-5 text-orange-600" />
                   Por Tipo de Inconsistência
                 </CardTitle>
+                <CardDescription>
+                  Distribuição de todas as inconsistências encontradas na base de contratos
+                </CardDescription>
               </CardHeader>
               <CardContent>
-                <ResponsiveContainer width="100%" height={300}>
-                  <BarChart data={inconsistencyData}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                    <XAxis dataKey="name" stroke="hsl(var(--foreground))" />
-                    <YAxis stroke="hsl(var(--foreground))" />
-                    <Tooltip />
-                    <Bar dataKey="count" fill="hsl(280, 100%, 30%)" radius={[4, 4, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
+                {distributionLoading ? (
+                  <div className="h-[300px] bg-muted animate-pulse rounded"></div>
+                ) : inconsistencyData.length === 0 ? (
+                  <div className="h-[300px] flex items-center justify-center text-muted-foreground">
+                    Nenhuma inconsistência encontrada
+                  </div>
+                ) : (
+                  <ResponsiveContainer width="100%" height={300}>
+                    <BarChart data={inconsistencyData}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                      <XAxis 
+                        dataKey="type" 
+                        stroke="hsl(var(--foreground))" 
+                        angle={-45}
+                        textAnchor="end"
+                        height={80}
+                        fontSize={12}
+                      />
+                      <YAxis stroke="hsl(var(--foreground))" />
+                      <Tooltip 
+                        formatter={(value, name, props) => {
+                          const percentage = props.payload?.percentage || 0;
+                          return [`${value} (${Number(percentage).toFixed(1)}%)`, 'Quantidade de Contratos'];
+                        }}
+                        labelFormatter={(label) => `Tipo: ${label}`}
+                      />
+                      <Bar dataKey="count" fill="#A27DF8" radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                )}
               </CardContent>
             </Card>
 
-            {/* Gráfico de pizza - Por tipo */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <AlertTriangle className="h-5 w-5 text-orange-600" />
-                  Proporção por Tipo
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <ResponsiveContainer width="100%" height={300}>
-                  <PieChart>
-                    <Pie
-                      data={inconsistencyData}
-                      cx="50%"
-                      cy="50%"
-                      labelLine={false}
-                      label={({ percentage }) => `${percentage}%`}
-                      outerRadius={80}
-                      dataKey="count"
-                    >
-                      {inconsistencyData.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={VIVO_COLORS[index % VIVO_COLORS.length]} />
-                      ))}
-                    </Pie>
-                    <Tooltip />
-                    <Legend />
-                  </PieChart>
-                </ResponsiveContainer>
-              </CardContent>
-            </Card>
+
 
             {/* Por área */}
             <Card>
@@ -406,38 +388,97 @@ const QualityDashboardPageInline: React.FC = () => {
                   <Building className="h-5 w-5 text-blue-600" />
                   Por Área Solicitante
                 </CardTitle>
+                <CardDescription>
+                  Distribuição de inconsistências por todas as áreas presentes na base
+                </CardDescription>
               </CardHeader>
               <CardContent>
-                <ResponsiveContainer width="100%" height={300}>
-                  <BarChart data={areaData}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                    <XAxis dataKey="name" stroke="hsl(var(--foreground))" />
-                    <YAxis stroke="hsl(var(--foreground))" />
-                    <Tooltip />
-                    <Bar dataKey="count" fill="hsl(210, 100%, 50%)" radius={[4, 4, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
+                {distributionLoading ? (
+                  <div className="h-[300px] bg-muted animate-pulse rounded"></div>
+                ) : areaData.length === 0 ? (
+                  <div className="h-[300px] flex items-center justify-center text-muted-foreground">
+                    Nenhuma área com inconsistências encontrada
+                  </div>
+                ) : (
+                  <ResponsiveContainer width="100%" height={300}>
+                    <BarChart data={areaData}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                      <XAxis 
+                        dataKey="area" 
+                        stroke="hsl(var(--foreground))" 
+                        angle={-45}
+                        textAnchor="end"
+                        height={80}
+                        fontSize={12}
+                      />
+                      <YAxis stroke="hsl(var(--foreground))" />
+                      <Tooltip 
+                        formatter={(value, name, props) => {
+                          const percentage = props.payload?.percentage || 0;
+                          return [`${value} (${Number(percentage).toFixed(1)}%)`, 'Quantidade de Contratos'];
+                        }}
+                        labelFormatter={(label) => `Área: ${label}`}
+                      />
+                      <Bar dataKey="count" fill="#A27DF8" radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                )}
               </CardContent>
             </Card>
 
-            {/* Ranking de fornecedores */}
+            {/* Tabela de fornecedores críticos */}
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   <Users className="h-5 w-5 text-red-600" />
                   Top Fornecedores Críticos
                 </CardTitle>
+                <CardDescription>
+                  Top 5 fornecedores com maior número de inconsistências contratuais
+                </CardDescription>
               </CardHeader>
               <CardContent>
-                <ResponsiveContainer width="100%" height={300}>
-                  <BarChart data={supplierData}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                    <XAxis dataKey="name" stroke="hsl(var(--foreground))" />
-                    <YAxis stroke="hsl(var(--foreground))" />
-                    <Tooltip />
-                    <Bar dataKey="inconsistencies" fill="hsl(0, 84%, 60%)" radius={[4, 4, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
+                {suppliersLoading ? (
+                  <div className="space-y-2">
+                    {Array.from({ length: 5 }).map((_, i) => (
+                      <div key={i} className="h-12 bg-muted animate-pulse rounded"></div>
+                    ))}
+                  </div>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="w-12">#</TableHead>
+                        <TableHead>Fornecedor</TableHead>
+                        <TableHead className="text-center">Contratos com Inconsistências</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {(supplierRanking || []).map((supplier, index) => (
+                        <TableRow key={supplier.supplier} className="hover:bg-muted/50">
+                          <TableCell className="font-medium text-muted-foreground">
+                            {index + 1}
+                          </TableCell>
+                          <TableCell className="font-medium">
+                            {supplier.supplier || 'Fornecedor não informado'}
+                          </TableCell>
+                          <TableCell className="text-center">
+                            <div className="font-medium text-lg">
+                              {supplier.inconsistencies}/{supplier.totalContracts}
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                      {(!supplierRanking || supplierRanking.length === 0) && (
+                        <TableRow>
+                          <TableCell colSpan={3} className="text-center text-muted-foreground py-8">
+                            Nenhum fornecedor encontrado
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </TableBody>
+                  </Table>
+                )}
               </CardContent>
             </Card>
           </div>
@@ -641,9 +682,9 @@ const QualityDashboardPageInline: React.FC = () => {
                     <XAxis dataKey="month" stroke="hsl(var(--foreground))" />
                     <YAxis stroke="hsl(var(--foreground))" />
                     <Tooltip />
-                    <Line type="monotone" dataKey="expiring30" stroke={VIVO_COLORS[4]} strokeWidth={3} name="30 dias" />
-                    <Line type="monotone" dataKey="expiring60" stroke={VIVO_COLORS[3]} strokeWidth={3} name="60 dias" />
-                    <Line type="monotone" dataKey="expiring90" stroke={VIVO_COLORS[5]} strokeWidth={3} name="90 dias" />
+                    <Line type="monotone" dataKey="expiring30" stroke="#A27DF8" strokeWidth={3} name="30 dias" />
+                    <Line type="monotone" dataKey="expiring60" stroke="#B48FFA" strokeWidth={3} name="60 dias" />
+                    <Line type="monotone" dataKey="expiring90" stroke="#9267F6" strokeWidth={3} name="90 dias" />
                   </LineChart>
                 </ResponsiveContainer>
               </CardContent>
