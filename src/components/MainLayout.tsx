@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import Sidebar from './Sidebar';
 import Header from './Header';
 import SampleSelectionPage from '@/pages/SampleSelectionPage';
@@ -24,9 +24,12 @@ import {
   Users,
   Building,
   Eye,
-  RefreshCw
+  RefreshCw,
+  MousePointer
 } from 'lucide-react';
 import { useQualityMetrics, useSupplierRanking, useInconsistencyDistribution } from '@/hooks/useQualityMetrics';
+import { useQuery } from '@tanstack/react-query';
+import { supabase } from '@/integrations/supabase/client';
 
 // Cores do tema Vivo - Padrão #A27DF8
 const VIVO_COLORS = [
@@ -41,9 +44,136 @@ const VIVO_COLORS = [
 ];
 
 const QualityDashboardPageInline: React.FC = () => {
+  const [activeFilters, setActiveFilters] = useState<{
+    tipoAlerta?: string;
+    fornecedor?: string;
+    risco?: string;
+    areasolicitante?: string;
+    periodo?: string;
+  }>({});
+
   const { data: metrics, isLoading, error } = useQualityMetrics();
   const { data: supplierRanking, isLoading: suppliersLoading } = useSupplierRanking();
   const { data: inconsistencyDistribution, isLoading: distributionLoading } = useInconsistencyDistribution();
+
+  // Hook para buscar contratos com inconsistências para a tabela
+  const { data: allContractsWithInconsistencies, isLoading: contractsLoading } = useQuery({
+    queryKey: ['contracts-with-inconsistencies'],
+    queryFn: async () => {
+      const { data: contracts, error } = await supabase
+        .from('contratos_vivo')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      if (!contracts) return [];
+
+      // Filtrar apenas contratos com inconsistências
+      return contracts.filter(contract => {
+        const tipoAlerta = contract.tipo_alerta;
+        if (!tipoAlerta) return true; // null/undefined = inconsistência
+        
+        const normalizedAlert = tipoAlerta.toLowerCase().trim();
+        return !(normalizedAlert === 'contrato aprovado' || 
+                 normalizedAlert === 'aprovado' ||
+                 normalizedAlert.includes('aprovado'));
+      });
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+
+  // Função auxiliar para determinar o período de vencimento
+  const getContractPeriod = (dataVencimento: string | null) => {
+    if (!dataVencimento) return null;
+    
+    const today = new Date();
+    const expiryDate = new Date(dataVencimento);
+    const daysDifference = Math.ceil((expiryDate.getTime() - today.getTime()) / (1000 * 3600 * 24));
+    
+    if (daysDifference <= 30 && daysDifference > 0) return '0-30 dias';
+    if (daysDifference <= 60 && daysDifference > 30) return '31-60 dias';
+    if (daysDifference <= 90 && daysDifference > 60) return '61-90 dias';
+    if (daysDifference > 90) return '90+ dias';
+    return null; // Contratos já vencidos ou com data inválida
+  };
+
+  // Aplicar filtros dinâmicos aos contratos
+  const contractsWithInconsistencies = useMemo(() => {
+    if (!allContractsWithInconsistencies) return [];
+
+    console.log('Active filters:', activeFilters);
+    console.log('Total contracts before filtering:', allContractsWithInconsistencies.length);
+
+    const filtered = allContractsWithInconsistencies.filter(contract => {
+      // Filtro por tipo de alerta
+      if (activeFilters.tipoAlerta && contract.tipo_alerta !== activeFilters.tipoAlerta) {
+        return false;
+      }
+
+      // Filtro por fornecedor
+      if (activeFilters.fornecedor && contract.fornecedor !== activeFilters.fornecedor) {
+        return false;
+      }
+
+      // Filtro por risco
+      if (activeFilters.risco && contract.risco !== activeFilters.risco) {
+        return false;
+      }
+
+      // Filtro por área solicitante
+      if (activeFilters.areasolicitante && contract.area_solicitante !== activeFilters.areasolicitante) {
+        return false;
+      }
+
+      // Filtro por período de vencimento
+      if (activeFilters.periodo) {
+        const contractPeriod = getContractPeriod(contract.data_vencimento);
+        if (contractPeriod !== activeFilters.periodo) {
+          return false;
+        }
+      }
+
+      return true;
+    });
+
+    console.log('Filtered contracts:', filtered.length);
+    return filtered;
+  }, [allContractsWithInconsistencies, activeFilters]);
+
+  // Funções para lidar com cliques nos gráficos
+  const handleBarClick = (data: { type?: string; area?: string; period?: string }, filterType: string) => {
+    console.log('Bar clicked:', data, 'filterType:', filterType);
+    const filterKey = filterType as keyof typeof activeFilters;
+    let filterValue = '';
+    
+    if (filterType === 'tipoAlerta') {
+      filterValue = data.type || '';
+    } else if (filterType === 'areasolicitante') {
+      filterValue = data.area || '';
+    } else if (filterType === 'periodo') {
+      filterValue = data.period || '';
+    }
+    
+    console.log('Setting filter:', filterKey, '=', filterValue);
+    
+    setActiveFilters(prev => ({
+      ...prev,
+      [filterKey]: prev[filterKey] === filterValue ? undefined : filterValue
+    }));
+  };
+
+  const handleSupplierClick = (supplierName: string) => {
+    console.log('Supplier clicked:', supplierName);
+    setActiveFilters(prev => ({
+      ...prev,
+      fornecedor: prev.fornecedor === supplierName ? undefined : supplierName
+    }));
+  };
+
+  // Função para limpar todos os filtros
+  const clearAllFilters = () => {
+    setActiveFilters({});
+  };
 
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat('pt-BR', {
@@ -153,6 +283,81 @@ const QualityDashboardPageInline: React.FC = () => {
             Tempo Real
           </Badge>
         </div>
+      </div>
+
+      {/* Filtros Ativos */}
+      {(activeFilters.tipoAlerta || activeFilters.fornecedor || activeFilters.risco || activeFilters.areasolicitante || activeFilters.periodo) && (
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-medium text-blue-900">Filtros Ativos:</span>
+              {activeFilters.tipoAlerta && (
+                <Badge variant="secondary" className="bg-blue-100 text-blue-800">
+                  Tipo: {activeFilters.tipoAlerta}
+                  <button 
+                    onClick={() => setActiveFilters(prev => ({ ...prev, tipoAlerta: undefined }))}
+                    className="ml-1 text-blue-600 hover:text-blue-800"
+                  >
+                    ×
+                  </button>
+                </Badge>
+              )}
+              {activeFilters.fornecedor && (
+                <Badge variant="secondary" className="bg-blue-100 text-blue-800">
+                  Fornecedor: {activeFilters.fornecedor}
+                  <button 
+                    onClick={() => setActiveFilters(prev => ({ ...prev, fornecedor: undefined }))}
+                    className="ml-1 text-blue-600 hover:text-blue-800"
+                  >
+                    ×
+                  </button>
+                </Badge>
+              )}
+              {activeFilters.risco && (
+                <Badge variant="secondary" className="bg-blue-100 text-blue-800">
+                  Risco: {activeFilters.risco}
+                  <button 
+                    onClick={() => setActiveFilters(prev => ({ ...prev, risco: undefined }))}
+                    className="ml-1 text-blue-600 hover:text-blue-800"
+                  >
+                    ×
+                  </button>
+                </Badge>
+              )}
+              {activeFilters.areasolicitante && (
+                <Badge variant="secondary" className="bg-blue-100 text-blue-800">
+                  Área: {activeFilters.areasolicitante}
+                  <button 
+                    onClick={() => setActiveFilters(prev => ({ ...prev, areasolicitante: undefined }))}
+                    className="ml-1 text-blue-600 hover:text-blue-800"
+                  >
+                    ×
+                  </button>
+                </Badge>
+              )}
+              {activeFilters.periodo && (
+                <Badge variant="secondary" className="bg-blue-100 text-blue-800">
+                  Período: {activeFilters.periodo}
+                  <button 
+                    onClick={() => setActiveFilters(prev => ({ ...prev, periodo: undefined }))}
+                    className="ml-1 text-blue-600 hover:text-blue-800"
+                  >
+                    ×
+                  </button>
+                </Badge>
+              )}
+            </div>
+            <button
+              onClick={clearAllFilters}
+              className="text-sm text-blue-600 hover:text-blue-800 underline"
+            >
+              Limpar todos os filtros
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div className="space-y-2">
       </div>
 
       {/* Tabs de navegação */}
@@ -337,12 +542,15 @@ const QualityDashboardPageInline: React.FC = () => {
             {/* Gráfico de barras - Por tipo */}
             <Card>
               <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <AlertTriangle className="h-5 w-5 text-orange-600" />
-                  Por Tipo de Inconsistência
+                <CardTitle className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <AlertTriangle className="h-5 w-5 text-orange-600" />
+                    Por Tipo de Inconsistência
+                  </div>
+                  <MousePointer className="h-4 w-4 text-muted-foreground" />
                 </CardTitle>
                 <CardDescription>
-                  Distribuição de todas as inconsistências encontradas na base de contratos
+                  Distribuição de todas as inconsistências encontradas na base de contratos • Clique nas barras para filtrar
                 </CardDescription>
               </CardHeader>
               <CardContent>
@@ -372,7 +580,16 @@ const QualityDashboardPageInline: React.FC = () => {
                         }}
                         labelFormatter={(label) => `Tipo: ${label}`}
                       />
-                      <Bar dataKey="count" fill="#A27DF8" radius={[4, 4, 0, 0]} />
+                      <Bar 
+                        dataKey="count" 
+                        fill="#A27DF8" 
+                        radius={[4, 4, 0, 0]}
+                        onClick={(data) => {
+                          console.log('Bar clicked - data:', data);
+                          handleBarClick({ type: data.type }, 'tipoAlerta');
+                        }}
+                        style={{ cursor: 'pointer' }}
+                      />
                     </BarChart>
                   </ResponsiveContainer>
                 )}
@@ -384,12 +601,15 @@ const QualityDashboardPageInline: React.FC = () => {
             {/* Por área */}
             <Card>
               <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Building className="h-5 w-5 text-blue-600" />
-                  Por Área Solicitante
+                <CardTitle className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Building className="h-5 w-5 text-blue-600" />
+                    Por Área Solicitante
+                  </div>
+                  <MousePointer className="h-4 w-4 text-muted-foreground" />
                 </CardTitle>
                 <CardDescription>
-                  Distribuição de inconsistências por todas as áreas presentes na base
+                  Distribuição de inconsistências por todas as áreas presentes na base • Clique nas barras para filtrar
                 </CardDescription>
               </CardHeader>
               <CardContent>
@@ -419,7 +639,16 @@ const QualityDashboardPageInline: React.FC = () => {
                         }}
                         labelFormatter={(label) => `Área: ${label}`}
                       />
-                      <Bar dataKey="count" fill="#A27DF8" radius={[4, 4, 0, 0]} />
+                      <Bar 
+                        dataKey="count" 
+                        fill="#A27DF8" 
+                        radius={[4, 4, 0, 0]}
+                        onClick={(data) => {
+                          console.log('Area bar clicked - data:', data);
+                          handleBarClick({ area: data.area }, 'areasolicitante');
+                        }}
+                        style={{ cursor: 'pointer' }}
+                      />
                     </BarChart>
                   </ResponsiveContainer>
                 )}
@@ -429,12 +658,15 @@ const QualityDashboardPageInline: React.FC = () => {
             {/* Tabela de fornecedores críticos */}
             <Card>
               <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Users className="h-5 w-5 text-red-600" />
-                  Top Fornecedores Críticos
+                <CardTitle className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Users className="h-5 w-5 text-red-600" />
+                    Top Fornecedores Críticos
+                  </div>
+                  <MousePointer className="h-4 w-4 text-muted-foreground" />
                 </CardTitle>
                 <CardDescription>
-                  Top 5 fornecedores com maior número de inconsistências contratuais
+                  Top 5 fornecedores com maior número de inconsistências contratuais • Clique nas linhas para filtrar
                 </CardDescription>
               </CardHeader>
               <CardContent>
@@ -455,7 +687,14 @@ const QualityDashboardPageInline: React.FC = () => {
                     </TableHeader>
                     <TableBody>
                       {(supplierRanking || []).map((supplier, index) => (
-                        <TableRow key={supplier.supplier} className="hover:bg-muted/50">
+                        <TableRow 
+                          key={supplier.supplier} 
+                          className="hover:bg-muted/50 cursor-pointer"
+                          onClick={() => {
+                            console.log('Supplier row clicked:', supplier.supplier);
+                            handleSupplierClick(supplier.supplier);
+                          }}
+                        >
                           <TableCell className="font-medium text-muted-foreground">
                             {index + 1}
                           </TableCell>
@@ -645,10 +884,16 @@ const QualityDashboardPageInline: React.FC = () => {
             {/* Distribuição por período */}
             <Card>
               <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Calendar className="h-5 w-5 text-blue-600" />
-                  Distribuição por Período
+                <CardTitle className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Calendar className="h-5 w-5 text-blue-600" />
+                    Distribuição por Período
+                  </div>
+                  <MousePointer className="h-4 w-4 text-muted-foreground" />
                 </CardTitle>
+                <CardDescription>
+                  Contratos por período de vencimento • Clique nas barras para filtrar
+                </CardDescription>
               </CardHeader>
               <CardContent>
                 <ResponsiveContainer width="100%" height={300}>
@@ -657,7 +902,15 @@ const QualityDashboardPageInline: React.FC = () => {
                     <XAxis dataKey="period" stroke="hsl(var(--foreground))" />
                     <YAxis stroke="hsl(var(--foreground))" />
                     <Tooltip />
-                    <Bar dataKey="count" radius={[4, 4, 0, 0]}>
+                    <Bar 
+                      dataKey="count" 
+                      radius={[4, 4, 0, 0]}
+                      onClick={(data) => {
+                        console.log('Period bar clicked - data:', data);
+                        handleBarClick({ period: data.period }, 'periodo');
+                      }}
+                      style={{ cursor: 'pointer' }}
+                    >
                       {deadlineData.map((entry, index) => (
                         <Cell key={`cell-${index}`} fill={entry.color} />
                       ))}
@@ -809,6 +1062,118 @@ const QualityDashboardPageInline: React.FC = () => {
           </div>
         </TabsContent>
       </Tabs>
+
+      {/* Tabela de Contratos com Inconsistências */}
+      <div className="mt-8">
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <FileX className="h-5 w-5 text-red-500" />
+                Contratos com Inconsistências
+                {contractsWithInconsistencies && (
+                  <Badge variant="outline" className="ml-2">
+                    {contractsWithInconsistencies.length} contrato(s)
+                  </Badge>
+                )}
+              </div>
+              {(activeFilters.tipoAlerta || activeFilters.fornecedor || activeFilters.risco || activeFilters.areasolicitante || activeFilters.periodo) && (
+                <Badge variant="secondary" className="bg-yellow-100 text-yellow-800">
+                  Filtrados
+                </Badge>
+              )}
+            </CardTitle>
+            <CardDescription>
+              {(activeFilters.tipoAlerta || activeFilters.fornecedor || activeFilters.risco || activeFilters.areasolicitante || activeFilters.periodo) 
+                ? "Lista filtrada dos contratos com inconsistências - clique nos gráficos acima para filtrar"
+                : "Lista detalhada dos contratos que apresentam inconsistências - clique nos gráficos acima para filtrar"
+              }
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {contractsLoading ? (
+              <div className="flex items-center justify-center py-8">
+                <RefreshCw className="h-6 w-6 animate-spin text-primary" />
+                <span className="ml-2">Carregando contratos...</span>
+              </div>
+            ) : contractsWithInconsistencies && contractsWithInconsistencies.length > 0 ? (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Número do Contrato</TableHead>
+                    <TableHead>Fornecedor</TableHead>
+                    <TableHead>Área Solicitante</TableHead>
+                    <TableHead>Tipo de Alerta</TableHead>
+                    <TableHead>Nível de Risco</TableHead>
+                    <TableHead>Valor do Contrato</TableHead>
+                    <TableHead>Multa</TableHead>
+                    <TableHead>Data de Vencimento</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {contractsWithInconsistencies.map((contract, index) => (
+                    <TableRow key={contract.id || index}>
+                      <TableCell className="font-medium">
+                        {contract.numero_contrato || 'N/A'}
+                      </TableCell>
+                      <TableCell>{contract.fornecedor || 'N/A'}</TableCell>
+                      <TableCell>{contract.area_solicitante || 'N/A'}</TableCell>
+                      <TableCell>
+                        <Badge 
+                          variant="destructive" 
+                          className="bg-red-100 text-red-800 border-red-200"
+                        >
+                          {contract.tipo_alerta || 'Inconsistência não especificada'}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        <Badge 
+                          variant={
+                            contract.risco === 'ALTO' ? 'destructive' :
+                            contract.risco === 'MÉDIO' ? 'default' : 'secondary'
+                          }
+                        >
+                          {contract.risco || 'N/A'}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        {contract.valor_contrato ? 
+                          formatCurrency(parseFloat(String(contract.valor_contrato))) : 
+                          'N/A'
+                        }
+                      </TableCell>
+                      <TableCell>
+                        <span className={contract.multa && parseFloat(String(contract.multa)) > 0 ? 'text-red-600 font-semibold' : ''}>
+                          {contract.multa ? 
+                            formatCurrency(parseFloat(String(contract.multa))) : 
+                            'R$ 0,00'
+                          }
+                        </span>
+                      </TableCell>
+                      <TableCell>
+                        {contract.data_vencimento ? 
+                          new Date(contract.data_vencimento).toLocaleDateString('pt-BR') : 
+                          'N/A'
+                        }
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            ) : (
+              <div className="text-center py-8">
+                <Shield className="h-12 w-12 text-green-500 mx-auto mb-4" />
+                <h3 className="text-lg font-semibold text-green-600 mb-2">
+                  Excelente! Nenhuma inconsistência encontrada
+                </h3>
+                <p className="text-muted-foreground">
+                  Todos os contratos estão aprovados e em conformidade
+                </p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 };
